@@ -8,13 +8,10 @@
 #include <opencv2/opencv.hpp>
 
 #include "cuda_crop.hpp"
-#include "cuda_utils.hpp"
 
 int32_t main(int32_t argc, char** argv)
 {
-    // set to enable CUDA timing of the crop kernel
-    //
-    constexpr auto time = false;
+    constexpr auto reportExecutionTime = true;
 
     if (argc != 2)
     {
@@ -23,71 +20,38 @@ int32_t main(int32_t argc, char** argv)
         return -1;
     }
 
-    // centre crop 1080p to 720p
+    // centre crop 1080p down to 720p
     //
     const auto inputRect = cv::Rect2i(0, 0, 1920, 1080);
     const auto outputRect = cv::Rect2i(319, 179, 1280, 720);
+    const auto videoFileName = std::string(argv[1]);;
+    auto video = cv::VideoCapture(videoFileName);
 
-    cudaStream_t stream;
-    cudaEvent_t timerStart, timerStop;
-    uchar3* input = nullptr;
-    uchar3* output = nullptr;
     try
     {
-        CUDA_CHECK(cudaStreamCreate(&stream));
-        CUDA_CHECK(cudaMallocManaged((void**)&input, inputRect.width * inputRect.height * sizeof(uchar3)));
-        CUDA_CHECK(cudaMallocManaged((void**)&output, outputRect.width * outputRect.height * sizeof(uchar3)));
-
-        float elapsedTime;
-        if constexpr (time)
+        // notes 1, images are BRG / RGB, i.e. each composite pixel can be represented using uchar3
+        //       2, there is also a constructor also takes a cuda stream to allow integration with other cuda requirements
+        //
+        auto cudaCrop = CudaCrop<uchar3>(inputRect, outputRect);
+        auto fullFrame = cv::Mat(inputRect.size(), CV_8UC3, cudaCrop.getInputBuffer());
+        auto croppedFrame = cv::Mat(outputRect.size(), CV_8UC3, cudaCrop.getOutputBuffer());
+        while (video.read(fullFrame))
         {
-            CUDA_CHECK(cudaEventCreate(&timerStart));
-            CUDA_CHECK(cudaEventCreate(&timerStop));
-        }
-
-        const auto videoFileName = std::string(argv[1]);;
-        std::cout << "Centre cropping video: " << videoFileName << "\n";
-
-        auto video = cv::VideoCapture(videoFileName);
-        auto frame = cv::Mat(inputRect.size(), CV_8UC3, input);
-        while (video.read(frame))
-        {
-            if constexpr (time) CUDA_CHECK(cudaEventRecord(timerStart, stream));
-            CUDA_CHECK(cudaCrop(input, output, inputRect, outputRect, stream));
-            if constexpr (time) CUDA_CHECK(cudaEventRecord(timerStop, stream));
-            CUDA_CHECK(cudaStreamSynchronize(stream));
-
-            if constexpr (time)
-            {
-                CUDA_CHECK(cudaEventElapsedTime(&elapsedTime, timerStart, timerStop));
-                std::cout << "Time: " << elapsedTime << " ms\n";
-            }
-
-            auto croppedFrame = cv::Mat(outputRect.size(), CV_8UC3, output);
-            cv::imshow("Centre Cropped Video", croppedFrame);
+            auto elapsedTime = cudaCrop.execute();
+            if constexpr (reportExecutionTime) std::cout << "Crop time: " << elapsedTime << " ms\n";
 
             // note, assumes a 25 fps video, adjust accordingly
             //
+            cv::imshow("Centre Cropped Video", croppedFrame);
             if (cv::waitKey(40) == 27) break;
         }
-
-        cv::destroyAllWindows();
     }
     catch (const std::string& ex)
     {
         std::cout << "Error: " << ex << "\n";
     }
 
-    // not checking the return values here as it's the end of the program...
-    //
-    cudaStreamDestroy(stream);
-    cudaFree(input);
-    cudaFree(output);
-    if constexpr (time)
-    {
-        cudaEventDestroy(timerStart);
-        cudaEventDestroy(timerStop);
-    }
+    cv::destroyAllWindows();
 
     return 0;
 }
