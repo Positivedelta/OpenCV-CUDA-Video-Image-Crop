@@ -2,6 +2,8 @@
 // (c) Bit Parallel Ltd, January 2023
 //
 
+#include <opencv2/core/core.hpp>
+
 #include "cuda_utils.hpp"
 #include "cuda_crop.hpp"
 
@@ -18,26 +20,42 @@ __global__ void gpuCrop(T* input, T* output, const int32_t offsetX, const int32_
 }
 
 template <class PixelType>
-CudaCrop<PixelType>::CudaCrop(const cv::Rect inputRect, const cv::Rect outputRect):
-    inputRect(inputRect), outputRect(outputRect),
+CudaCrop<PixelType>::CudaCrop(const cv::Size& inputSize, const cv::Rect& outputRect):
+    inputSize(inputSize), outputRect(outputRect),
     blockDim(dim3(8, 8)), gridDim(dim3(iDivRoundUp(outputRect.width, blockDim.x), iDivRoundUp(outputRect.height, blockDim.y))) {
         CUDA_CHECK(cudaStreamCreate(&stream));
-        init();
+        initDeviceMemory();
+        initDeviceEvents();
 }
 
 template <class PixelType>
-CudaCrop<PixelType>::CudaCrop(const cv::Rect inputRect, const cv::Rect outputRect, const cudaStream_t stream):
-    inputRect(inputRect), outputRect(outputRect),
+CudaCrop<PixelType>::CudaCrop(const cv::Size& inputSize, const cv::Rect& outputRect, const cudaStream_t stream):
+    inputSize(inputSize), outputRect(outputRect),
     blockDim(dim3(8, 8)), gridDim(dim3(iDivRoundUp(outputRect.width, blockDim.x), iDivRoundUp(outputRect.height, blockDim.y))),
     stream(stream) {
-        init();
+        initDeviceMemory();
+        initDeviceEvents();
 }
 
 template <class PixelType>
-void CudaCrop<PixelType>::init()
+CudaCrop<PixelType>::CudaCrop(const cv::Mat& inputMat, const cv::Rect& outputRect, const cudaStream_t stream):
+    inputSize(inputMat.size()), input((PixelType*)inputMat.data), outputRect(outputRect),
+    blockDim(dim3(8, 8)), gridDim(dim3(iDivRoundUp(outputRect.width, blockDim.x), iDivRoundUp(outputRect.height, blockDim.y))),
+    stream(stream) {
+        CUDA_CHECK(cudaMallocManaged((void**)&output, outputRect.width * outputRect.height * sizeof(PixelType)));
+        initDeviceEvents();
+}
+
+template <class PixelType>
+void CudaCrop<PixelType>::initDeviceMemory()
 {
-    CUDA_CHECK(cudaMallocManaged((void**)&input, inputRect.width * inputRect.height * sizeof(PixelType)));
+    CUDA_CHECK(cudaMallocManaged((void**)&input, inputSize.width * inputSize.height * sizeof(PixelType)));
     CUDA_CHECK(cudaMallocManaged((void**)&output, outputRect.width * outputRect.height * sizeof(PixelType)));
+}
+
+template <class PixelType>
+void CudaCrop<PixelType>::initDeviceEvents()
+{
     CUDA_CHECK(cudaEventCreate(&timerStart));
     CUDA_CHECK(cudaEventCreate(&timerStop));
 }
@@ -58,7 +76,7 @@ template <class PixelType>
 float CudaCrop<PixelType>::execute() const
 {
     CUDA_CHECK(cudaEventRecord(timerStart, stream));
-    gpuCrop<PixelType><<<gridDim, blockDim, 0, stream>>>(input, output, outputRect.x, outputRect.y, inputRect.width, outputRect.width, outputRect.height);
+    gpuCrop<PixelType><<<gridDim, blockDim, 0, stream>>>(input, output, outputRect.x, outputRect.y, inputSize.width, outputRect.width, outputRect.height);
     CUDA_CHECK(cudaEventRecord(timerStop, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
 

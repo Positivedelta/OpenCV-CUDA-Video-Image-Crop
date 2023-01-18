@@ -22,7 +22,7 @@ int32_t main(int32_t argc, char** argv)
 
     // centre crop 1080p down to 720p
     //
-    const auto inputRect = cv::Rect2i(0, 0, 1920, 1080);
+    const auto inputSize = cv::Size2i(1920, 1080);
     const auto outputRect = cv::Rect2i(319, 179, 1280, 720);
     const auto videoFileName = std::string(argv[1]);;
     auto video = cv::VideoCapture(videoFileName);
@@ -30,10 +30,11 @@ int32_t main(int32_t argc, char** argv)
     try
     {
         // notes 1, images are BRG / RGB, i.e. each composite pixel can be represented using uchar3
-        //       2, there is also a constructor also takes a cuda stream to allow integration with other cuda requirements
+        //       2, there are other constructor options, can take a cuda stream to allow integration with other GPU requirements
+        //          or can accept an exising input cv::Mat backed by device memory, check cuda_crop.hpp for the constructor details
         //
-        auto cudaCrop = CudaCrop<uchar3>(inputRect, outputRect);
-        auto fullFrame = cv::Mat(inputRect.size(), CV_8UC3, cudaCrop.getInputBuffer());
+        auto cudaCrop = CudaCrop<uchar3>(inputSize, outputRect);
+        auto fullFrame = cv::Mat(inputSize, CV_8UC3, cudaCrop.getInputBuffer());
         auto croppedFrame = cv::Mat(outputRect.size(), CV_8UC3, cudaCrop.getOutputBuffer());
         while (video.read(fullFrame))
         {
